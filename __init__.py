@@ -83,6 +83,9 @@ class MSMWorld(World):
         "enabled_sports",
         "include_tournaments",
         "include_exhibition",
+        "include_alt_paths",
+        "alt_path_type",
+        "always_spawn_alt_paths",
         "cup_unlock_type",
         "court_unlock_type",
         "exhibition_type",
@@ -93,6 +96,7 @@ class MSMWorld(World):
         "win_cups_amount",
         "boss_locations",
         "party_mode",
+        "start_with_random_mushroom_cups",
         "character_sanity",
         "court_sanity",
         "special_sanity",
@@ -134,6 +138,13 @@ class MSMWorld(World):
             "h_points": {"value": self.options.h_points_win.value, "enabled": self.options.enable_h_points_win.value},
             "v_points": {"value": self.options.v_points_win.value, "enabled": True}, # Volleyball always has win points
         }
+
+        # Alt Path should only be enable with Tournaments
+        if self.options.include_alt_paths.value and not self.options.include_tournaments.value:
+            raise OptionError(
+                f"[Mario Sports Mix] {self.player_name} has Alt Paths enabled but they don't have Tournaments enabled!"
+                f"How are you expecting to access them?!"
+            )
 
         # Filter to get values only if 'enabled' is True
         active_values = [item["value"] for item in points_to_win.values() if item["enabled"]]
@@ -271,9 +282,19 @@ class MSMWorld(World):
             "h_points_win": self.options.h_points_win.value,
             "h_period": self.options.h_period.value,
 
+            # Alt Path Stuff
+            "include_alt_paths": self.options.include_alt_paths.value,
+            "alt_path_type": self.options.alt_path_type.value,
+            "always_spawn_alt_paths": self.options.always_spawn_alt_paths.value,
+
             # Party Mode Stuff
             "party_mode": self.options.party_mode.value,
             "party_mode_opponent": self.options.party_mode_opponent.value,
+
+            # Meme Stuff
+            "oops_all_character": self.options.oops_all_character.value,
+            "shuffle_music": self.options.shuffle_music.value,
+            "random_tint": self.options.random_tint.value,
         }
 
         return slot_data

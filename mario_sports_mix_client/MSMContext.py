@@ -78,24 +78,24 @@ character_names = [
 # Court IDs in the order they appear in the cups
 tournament_round_stages = {
     "Basketball": {
-        "Mushroom Cup": ["s01", "s02", "s05"],
-        "Flower Cup": ["s06", "s17", "s07"],
-        "Star Cup": ["s10", "s11", "s16"],
+        "Mushroom": ["s01", "s02", "s05"],
+        "Flower": ["s06", "s17", "s07"],
+        "Star": ["s10", "s11", "s16"],
     },
     "Dodgeball": {
-        "Mushroom Cup": ["s01", "s02", "s03"],
-        "Flower Cup": ["s05", "s04", "s07"],
-        "Star Cup": ["s09", "s11", "s16"],
+        "Mushroom": ["s01", "s02", "s03"],
+        "Flower": ["s05", "s04", "s07"],
+        "Star": ["s09", "s11", "s16"],
     },
     "Volleyball": {
-        "Mushroom Cup": ["s01", "s02", "s03"],
-        "Flower Cup": ["s05", "s06", "s17"],
-        "Star Cup": ["s10", "s11", "s16"],
+        "Mushroom": ["s01", "s02", "s03"],
+        "Flower": ["s05", "s06", "s17"],
+        "Star": ["s10", "s11", "s16"],
     },
     "Hockey": {
-        "Mushroom Cup": ["s01", "s04", "s03"],
-        "Flower Cup": ["s17", "s09", "s07"],
-        "Star Cup": ["s10", "s12", "s16"],
+        "Mushroom": ["s01", "s04", "s03"],
+        "Flower": ["s17", "s09", "s07"],
+        "Star": ["s10", "s12", "s16"],
     },
 }
 
@@ -130,6 +130,7 @@ costume_database = {
 # AP server storage is room-wide, so filler/trap save keys need seed + slot in the name.
 CONSUMABLE_STORAGE_CATEGORY = "msm_consumables"
 LOCATION_STORAGE_CATEGORY = "msm_locations"
+CUSTOM_STORAGE_CATEGORY = "msm_customization"
 # Build the reverse lookup once so persisted AP location IDs can be shown as local names.
 LOCATION_ID_TO_NAME = {location_id: name for name, location_id in LOCATION_NAME_TO_ID.items()}
 
@@ -308,12 +309,13 @@ class MSMCommandProcessor(SuperCommandProcessor):
     @mark_raw
     def _cmd_unlocked(self, type: str):
         """See what type of item you have unlocked.
-        :param type: Any from Modes, Ex/Exhibition, Courts, Cups, Characters/Chars/Char, Costumes/Costs/Cost, Abilities, Panel, Crystals"""
+        :param type: Any from Modes, Ex/Exhibition, Courts, Cups, Characters/Chars/Char, Costumes/Costs/Cost, Abilities, Panel, Crystals, Alt Paths"""
 
         type_to_cmd = {
             "modes": self.unlocked_modes,
             "courts": self.unlocked_courts,
             "cups": self.unlocked_cups,
+            "alt paths": self.unlocked_alt_paths,
             "exhibition": self.unlocked_ex,
             "ex": self.unlocked_ex,
             "characters": self.unlocked_characters,
@@ -400,6 +402,17 @@ class MSMCommandProcessor(SuperCommandProcessor):
             logger.info(f"Unlocked Courts: {final_items}")
         else:
             logger.info("No unlocked courts")
+    
+    def unlocked_alt_paths(self):
+        """Display what alt paths you have unlocked."""
+        unlocked_alt_paths = self.ctx.unlocked_alt_paths
+        final_items = []
+        if unlocked_alt_paths:
+            for item in unlocked_alt_paths:
+                final_items.append(item)
+            logger.info(f"Unlocked Alt Paths: {final_items}")
+        else:
+            logger.info("No unlocked alt paths")
 
     def unlocked_abilities(self):
         """Display what abilities you have unlocked."""
@@ -523,6 +536,9 @@ class MSMContext(SuperContext):
     win_cups_amount: Any = int
     exhibition_difficulties: Any = ()
     hard_tournament_difficulty: Any = bool
+    include_alt_paths: Any = bool
+    alt_path_type: Any = int
+    always_spawn_alt_paths: Any = bool
 
     # Deathlink Stuff
     deathlink_enabled: Any = False
@@ -563,6 +579,11 @@ class MSMContext(SuperContext):
     score_sanity_max: Any
     score_sanity_points_req: Any
 
+    # Meme Options
+    oops_all_character: Any = int
+    shuffle_music: Any = int
+    
+
     def __init__(self, server_address: str, password: str):
         super().__init__(server_address, password)
         self.game_interface = MSMInterface(logger)
@@ -578,6 +599,8 @@ class MSMContext(SuperContext):
         self.handled_consumable_indices: Set[int] = set()
         # Set when a Get/SetReply for handled consumables has been applied this session.
         self._consumables_load_event = asyncio.Event()
+        # Set when a Get/SetReply for handled customization data has been applied this session.
+        self._custom_data_load_event = asyncio.Event()
         self.start_process = True
         self.handled_gecko_codes = False
         self.game_session_active = False
@@ -600,6 +623,7 @@ class MSMContext(SuperContext):
 
         self.in_tournament_match = False
         self.last_tournament_location_name: Optional[str] = None
+        self.last_alt_path_location_name: Optional[str] = None
         self.cups_won: set[str] = set()
         self.exhibitions_won: set[str] = set()
         self.party_won: set[str] = set()
@@ -617,9 +641,11 @@ class MSMContext(SuperContext):
         # Lists for items
         self.unlocked_modes: set[str] = set()
         self.unlocked_cups: set[str] = set()
+        self.unlocked_alt_paths: set[str] = set()
+        self.progressive_alt_paths: int = 0
         self.unlocked_ex_diffs: set[str] = set()
-        self.progressive_courts: set[str] = set()
-        self.progressive_cups: set[str] = set()
+        self.progressive_courts: int = 0
+        self.progressive_cups: int = 0
         self.unlocked_sports_crystals: set[str] = set()
         self.unlocked_courts: set[str] = set()
         self.unlocked_characters: set[str] = set()
@@ -628,6 +654,9 @@ class MSMContext(SuperContext):
         self.unlocked_abilities: set[str] = set()
         self.filler_to_give = deque()
         self.traps_to_give = deque()
+
+        self.custom_data: Dict[str, Dict[str, Any]] = {"music": {}, "tints": {}}
+        self.music_randomization_applied = False
 
         # Address Library
         self.addresslib = AddressLib()
@@ -720,6 +749,14 @@ class MSMContext(SuperContext):
             return None
         return f"{CONSUMABLE_STORAGE_CATEGORY}_{self.slot}"
 
+    @property
+    def custom_storage_key(self) -> Optional[str]:
+        """Returns a key which is linked to the game and the slot name"""
+
+        if self.seed is None or self.slot is None:
+            return None
+        return f"{CUSTOM_STORAGE_CATEGORY}_{self.slot}"
+
     def _on_consumables_storage_update(self, value: Any) -> None:
         """Apply server storage for handled filler/trap indices and drop any stale queue entries."""
         if value is None:
@@ -742,6 +779,39 @@ class MSMContext(SuperContext):
         self.queued_consumable_indices -= handled
         self._consumables_load_event.set()
         self.debug_log(f"Loaded {len(self.handled_consumable_indices)} handled consumables")
+
+    def _on_custom_storage_update(self, value: Any) -> None:
+        """Apply server storage for handled customization data."""
+        if value is None:
+            self.custom_data = {"music": {}, "tints": {}}
+        elif isinstance(value, dict):
+            if "music" in value or "tints" in value:
+                custom_music_data = value.get("music", {})
+                custom_tint_data = value.get("tints", {})
+
+                if isinstance(custom_music_data, dict):
+                    music_data = {str(song): str(new_song) for song, new_song in custom_music_data.items()}
+                elif isinstance(custom_music_data, list):
+                    music_data = {str(song): str(new_song) for song, new_song in custom_music_data}
+                else:
+                    music_data = {}
+                    
+                if isinstance(custom_tint_data, dict):
+                    tint_data = {str(stage): [int(tint[0]), int(tint[1]), int(tint[2])] for stage, tint in custom_tint_data.items()}
+                elif isinstance(custom_tint_data, list):
+                    tint_data = {str(stage): [int(tint[0]), int(tint[1]), int(tint[2])] for stage, tint in custom_tint_data}
+                else:
+                    tint_data = {}
+
+                self.custom_data = {"music": music_data, "tints": tint_data}
+        elif isinstance(value, list):
+            self.custom_data = {"music": {str(song): str(new_song) for song, new_song in value}, "tints": {}}
+        else:
+            logger.warning(f"Unexpected customization data value type: {type(value)}")
+            return
+
+        self._custom_data_load_event.set()
+        self.log_once("load",f"Loaded {len(self.custom_data)} customization data entries",False)
 
     async def load_handled_consumables(self, initialise: bool = False) -> None:
         """Load handled filler/trap indices from AP storage before queuing ReceivedItems."""
@@ -768,6 +838,32 @@ class MSMContext(SuperContext):
         except asyncio.TimeoutError:
             logger.warning("Timed out loading handled consumables from server storage")
             self._consumables_load_event.set()
+
+    async def load_custom_data(self, initialise: bool = False) -> None:
+        """Load handled customization data from AP storage"""
+        key = self.custom_storage_key
+        if key is None:
+            return
+
+        self._custom_data_load_event.clear()
+
+        if initialise:
+            await self.send_msgs([{
+                "cmd": "Set",
+                "key": key,
+                "default": {},
+                "want_reply": False,
+                "operations": [{"operation": "default", "value": {}}],
+            }])
+            self.set_notify(key)
+        else:
+            await self.send_msgs([{"cmd": "Get", "keys": [key]}])
+
+        try:
+            await asyncio.wait_for(self._custom_data_load_event.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("Timed out loading customization data from server storage")
+            self._custom_data_load_event.set()
 
     async def _handle_received_items_consumables(self, args: dict) -> None:
         """Gets called when the client receives a ReceivedItems package, handles both consumables and
@@ -867,6 +963,10 @@ class MSMContext(SuperContext):
 
 
             # Custom Tournament Settings Data
+            self.alt_paths_enabled = self.slot_data.get("include_alt_paths")
+            self.alt_paths_unlock_type = self.slot_data.get("alt_path_type")
+            self.alt_paths_always_spawn = self.slot_data.get("always_spawn_alt_paths")
+
             self.custom_basket_time = self.slot_data.get("basket_time")
             self.enable_b_points = self.slot_data.get("enable_b_points_win")
             self.b_points_win = self.slot_data.get("b_points_win")
@@ -894,11 +994,21 @@ class MSMContext(SuperContext):
             self.send_both_character_sanity = self.slot_data.get("send_both_character_sanity")
             self.court_sanity = self.slot_data.get("court_sanity")
             self.special_sanity = self.slot_data.get("special_sanity")
+
+            # Cosmetic option data
+            self.all_one_opponent = self.slot_data.get("oops_all_character")
+            self.music_shuffle = self.slot_data.get("shuffle_music")
+            self.random_tint = self.slot_data.get("random_tint")
+            self.previous_stage = None
+
+            self.custom_data = {"music": {}, "tints": {}}
+            self.music_randomization_applied = False
             
 
             asyncio.create_task(self.update_death_link(self.deathlink_enabled))
             # Slot is known now — load/create the per-slot consumable save before items arrive.
             asyncio.create_task(self.load_handled_consumables(initialise=True))
+            asyncio.create_task(self.load_custom_data(initialise=True))
             if self.locations_checked:
                 asyncio.create_task(
                     self.send_msgs([{"cmd": "LocationChecks", "locations": sorted(self.locations_checked)}])
@@ -935,12 +1045,20 @@ class MSMContext(SuperContext):
             asyncio.create_task(self._handle_received_items_consumables(args))
 
         elif cmd in ("Retrieved", "SetReply"):
-            key = self.consumable_storage_key
-            if key:
-                if cmd == "Retrieved" and key in args.get("keys", {}):
-                    self._on_consumables_storage_update(args["keys"][key])
-                elif cmd == "SetReply" and args.get("key") == key:
+            consumable_key = self.consumable_storage_key
+            custom_key = self.custom_storage_key
+
+            if cmd == "Retrieved":
+                if consumable_key and consumable_key in args.get("keys", {}):
+                    self._on_consumables_storage_update(args["keys"][consumable_key])
+                if custom_key and custom_key in args.get("keys", {}):
+                    self._on_custom_storage_update(args["keys"][custom_key])
+
+            elif cmd == "SetReply":
+                if consumable_key and args.get("key") == consumable_key:
                     self._on_consumables_storage_update(args.get("value"))
+                if custom_key and args.get("key") == custom_key:
+                    self._on_custom_storage_update(args.get("value"))
 
     def make_gui(self):
         ui = super().make_gui()
@@ -973,12 +1091,16 @@ class MSMContext(SuperContext):
         self.boss_defeat_handled = False
         self.in_tournament_match = False
         self.last_tournament_location_name = None
+        self.last_alt_path_location_name = None
         self.has_sent_death = True
         self.received_death = True
         self.previous_opponent_score = None
         self.game_interface.current_tournament = None if not game_active else self.game_interface.current_tournament
         self.game_session_active = game_active
         self.active_game_version = dc.GAME_VERSION if game_active else None
+        self.music_randomization_applied = False
+        self.custom_data = {"music": {}, "tints": {}}
+        self._custom_data_load_event.clear()
 
     def reset_local_item_state(self, clear_received: bool = False, clear_consumed: bool = False) -> None:
         """Resets the item state whenever the user connects to a new slot"""
@@ -988,8 +1110,11 @@ class MSMContext(SuperContext):
         self.items_handled.clear()
         self.unlocked_modes.clear()
         self.unlocked_ex_diffs.clear()
-        self.progressive_courts.clear()
+        self.progressive_courts = 0
+        self.progressive_cups = 0
         self.unlocked_cups.clear()
+        self.unlocked_alt_paths.clear()
+        self.progressive_alt_paths = 0
         self.unlocked_sports_crystals.clear()
         self.unlocked_courts.clear()
         self.unlocked_characters.clear()
@@ -1034,10 +1159,27 @@ class MSMContext(SuperContext):
         }])
         self.debug_log(f"Saving handled consumables: {sorted(self.handled_consumable_indices)}")
 
+    async def save_custom_data(self) -> None:
+        key = self.custom_storage_key
+        if key is None:
+            return
+        await self.send_msgs([{
+            "cmd": "Set",
+            "key": key,
+            "default": {},
+            "want_reply": True,
+            "operations": [{
+                "operation": "replace",
+                "value": self.custom_data
+            }]
+        }])
+        self.debug_log(f"Saving customization data: {self.custom_data}")
+
     def reset_location_state(self) -> None:
         self.locations_checked.clear()
         self.checked_locations.clear()
         self.last_tournament_location_name = None
+        self.last_alt_path_location_name = None
 
     def current_item_func(self):
         """Returns the ID of the item
@@ -1160,6 +1302,7 @@ class MSMContext(SuperContext):
             "Sherbet Sea", "Rowdy Raft", "Fire Mountain"
         )
 
+
         ability_tuple = ("Special Meter", )
 
 
@@ -1175,21 +1318,31 @@ class MSMContext(SuperContext):
                     self.debug_log(f"Added {item_name} to unlocked_modes")
 
                 # Format to Basketball:, Dodgeball:, etc
+                # Changed for alt path names
                 for sport in sport_tuple:
                     if item_name.startswith(f"{sport}:"):
-                        self.unlocked_cups.add(item_name)
-                        self.debug_log(f"Added {item_name} to unlocked_cups")
+                            if not "Alt".casefold() in item_name.casefold():
+                                self.unlocked_cups.add(item_name)
+                                self.debug_log(f"Added {item_name} to unlocked_cups")
+
+                if "Alt".casefold() in item_name.casefold():
+                    if "Progressive".casefold() in item_name.casefold():
+                        self.progressive_alt_paths += 1
+                        self.debug_log(f"Added {item_name} to progressive_alt_paths")
+                    else:
+                        self.unlocked_alt_paths.add(item_name)
+                        self.debug_log(f"Added {item_name} to unlocked_alt_paths")
 
                 if item_name.startswith("Exhibition"):
                     self.unlocked_ex_diffs.add(item_name)
                     self.debug_log(f"Added {item_name} to unlocked_ex_diffs")
 
                 elif item_name == "Progressive Cup":
-                    self.progressive_cups.add(item_name)
+                    self.progressive_cups += 1
                     self.debug_log(f"Added {item_name} to progressive_cups")
 
                 elif item_name == "Progressive Court":
-                    self.progressive_courts.add(item_name)
+                    self.progressive_courts += 1
                     self.debug_log(f"Added {item_name} to progressive_courts")
 
                 elif item_name.startswith("Sports Crystal:"):
@@ -1229,6 +1382,8 @@ class MSMContext(SuperContext):
 
         await self.handle_sports_mix_unlock()
 
+        # Alternate Paths
+        await self.handle_alt_path_unlocks()
 
         if self.court_unlock_type == 1:
             await self.handle_progressive_court_unlocks()
@@ -1504,7 +1659,7 @@ class MSMContext(SuperContext):
             ])
 
         sports_list = ["Basketball", "Dodgeball", "Volleyball", "Hockey"]
-        progressive_count = len(self.progressive_cups)
+        progressive_count = self.progressive_cups
 
         # Iterate up to the current total of items held
         for index in range(progressive_count):
@@ -1554,6 +1709,214 @@ class MSMContext(SuperContext):
             else:
                 self.game_interface.dolphin_client.write_byte(sports_mix_unlocked, 3)
 
+    # === Alt Path Unlocks ===
+
+    async def handle_alt_path_unlocks(self):
+        """Handles unlocking Alt Paths"""
+
+        mushroom_alt_paths_unlocked = get_address(TournamentAddresses.mushroom_alt_paths_unlocked)
+        flower_alt_paths_unlocked = get_address(TournamentAddresses.flower_alt_paths_unlocked)
+        star_alt_paths_unlocked = get_address(TournamentAddresses.star_alt_paths_unlocked)
+        current_sport = self.game_interface.get_tournament_sport()
+        
+        alt_path_spawn = get_address(TournamentAddresses.alt_path_condition_fufilled)
+        current_node = self.game_interface.get_player_current_node()
+        outer_bridge_addr = get_address(TournamentAddresses.flower_outer_bridges_toggle)
+        inner_bridge_addr = get_address(TournamentAddresses.flower_inner_bridges_toggle)
+
+        current_cup = self.game_interface.get_tournament_cup()
+        
+
+        """self.log_once(
+            "alt_paths",
+            f"AltPath state: include={self.alt_paths_enabled}, type={self.alt_paths_unlock_type}, "
+            f"sport_var={current_sport}, "
+            f"unlocked={len(self.unlocked_alt_paths)}, progressive={len(self.progressive_alt_paths)}",
+            True
+        )"""
+
+
+        # Flower Cup Bridges always accessible
+        if current_node == 55:
+            self.game_interface.dolphin_client.write_byte(outer_bridge_addr, 1)
+            await self.check_write(outer_bridge_addr, "byte", 1)
+        else:
+            self.game_interface.dolphin_client.write_byte(outer_bridge_addr, 0)
+            await self.check_write(outer_bridge_addr, "byte", 0)
+
+        if current_node == 26:
+            self.game_interface.dolphin_client.write_byte(inner_bridge_addr, 0)
+            await self.check_write(inner_bridge_addr, "byte", 0)
+        else:
+            self.game_interface.dolphin_client.write_byte(inner_bridge_addr, 1)
+            await self.check_write(inner_bridge_addr, "byte", 1)
+
+
+        if self.alt_paths_enabled:
+
+            if self.alt_paths_always_spawn and current_node <= 17:
+                self.game_interface.dolphin_client.write_byte(alt_path_spawn, 1)
+                await self.check_write(alt_path_spawn, "byte", 1)
+
+            cups = ["Mushroom", "Flower", "Star"]
+            sports = ["Basketball", "Dodgeball", "Volleyball", "Hockey"]
+            
+            # Values for Mushroom, Flower, and Star Cup
+            basketball_values = [0, 0, 0]
+            dodgeball_values = [0, 0, 0]
+            volleyball_values = [0, 0, 0]
+            hockey_values = [0, 0, 0]
+            sports_mix_values = [0, 0, 0]
+            global_values = [0, 0, 0]
+
+            # I wish I didnt have to do this maaan
+            sport_values = {
+                                "Basketball": basketball_values,
+                                "Dodgeball": dodgeball_values,
+                                "Volleyball": volleyball_values,
+                                "Hockey": hockey_values,
+                                "Sports Mix": sports_mix_values
+                            }
+            sport_addresses = {
+                                "Basketball": BasketballAddresses,
+                                "Dodgeball": DodgeballAddresses,
+                                "Volleyball": VolleyballAddresses,
+                                "Hockey": HockeyAddresses,
+                            }        
+
+            if self.alt_paths_unlock_type == 0:
+
+                for sport in sports:
+                    for cup in cups:
+                        if f"{sport}: {cup} Cup Alt Paths (Normal)" in self.unlocked_alt_paths:
+                            if sport == "Basketball":
+                                basketball_values[cups.index(cup)] += 1
+                            elif sport == "Dodgeball":
+                                dodgeball_values[cups.index(cup)] += 1
+                            elif sport == "Volleyball":
+                                volleyball_values[cups.index(cup)] += 1
+                            elif sport == "Hockey":
+                                hockey_values[cups.index(cup)] += 1
+
+                for sport in sports:
+                    for cup in cups:
+                        if f"{sport}: {cup} Cup Alt Paths (Hard)" in self.unlocked_alt_paths:
+                            if sport == "Basketball":
+                                basketball_values[cups.index(cup)] += 2
+                            elif sport == "Dodgeball":
+                                dodgeball_values[cups.index(cup)] += 2
+                            elif sport == "Volleyball":
+                                volleyball_values[cups.index(cup)] += 2
+                            elif sport == "Hockey":
+                                hockey_values[cups.index(cup)] += 2
+
+                for cup in cups:
+                    if f"Sports Mix: {cup} Cup Alt Paths" in self.unlocked_alt_paths:
+                        sports_mix_values[cups.index(cup)] = 8
+
+                values_to_insert = sport_values[current_sport]
+                
+                self.game_interface.dolphin_client.write_byte(mushroom_alt_paths_unlocked, values_to_insert[0])
+                self.game_interface.dolphin_client.write_byte(flower_alt_paths_unlocked, values_to_insert[1])
+                self.game_interface.dolphin_client.write_byte(star_alt_paths_unlocked, values_to_insert[2])
+                await self.check_write(mushroom_alt_paths_unlocked, "byte", values_to_insert[0])
+                await self.check_write(flower_alt_paths_unlocked, "byte", values_to_insert[1])
+                await self.check_write(star_alt_paths_unlocked, "byte", values_to_insert[2])
+
+
+            elif self.alt_paths_unlock_type == 1:
+                    
+                for sport in sports:
+                    for cup in cups:
+                        if f"{sport}: {cup} Cup Alt Paths (Global)" in self.unlocked_alt_paths:
+                            if sport == "Basketball":
+                                basketball_values[cups.index(cup)] = 3
+                            elif sport == "Dodgeball":
+                                dodgeball_values[cups.index(cup)] = 3
+                            elif sport == "Volleyball":
+                                volleyball_values[cups.index(cup)] = 3
+                            elif sport == "Hockey":
+                                hockey_values[cups.index(cup)] = 3
+                
+                values_to_insert = sport_values[current_sport]
+                
+                self.game_interface.dolphin_client.write_byte(mushroom_alt_paths_unlocked, values_to_insert[0])
+                self.game_interface.dolphin_client.write_byte(flower_alt_paths_unlocked, values_to_insert[1])
+                self.game_interface.dolphin_client.write_byte(star_alt_paths_unlocked, values_to_insert[2])
+                await self.check_write(mushroom_alt_paths_unlocked, "byte", values_to_insert[0])
+                await self.check_write(flower_alt_paths_unlocked, "byte", values_to_insert[1])
+                await self.check_write(star_alt_paths_unlocked, "byte", values_to_insert[2])                
+
+
+            elif self.alt_paths_unlock_type == 2:
+
+                for cup in cups:
+                    if f"{cup} Cup Alt Paths (Normal)" in self.unlocked_alt_paths:
+                        global_values[cups.index(cup)] += 1
+
+                for cup in cups:
+                    if f"{cup} Cup Alt Paths (Hard)" in self.unlocked_alt_paths:
+                        global_values[cups.index(cup)] += 2
+
+                self.game_interface.dolphin_client.write_byte(mushroom_alt_paths_unlocked, global_values[0])
+                self.game_interface.dolphin_client.write_byte(flower_alt_paths_unlocked, global_values[1])
+                self.game_interface.dolphin_client.write_byte(star_alt_paths_unlocked, global_values[2])
+
+            elif self.alt_paths_unlock_type == 3:
+
+                for cup in cups:
+                    if f"{cup} Cup Alt Paths (Global)" in self.unlocked_alt_paths:
+                        global_values[cups.index(cup)] = 3
+
+                self.game_interface.dolphin_client.write_byte(mushroom_alt_paths_unlocked, global_values[0])
+                self.game_interface.dolphin_client.write_byte(flower_alt_paths_unlocked, global_values[1])
+                self.game_interface.dolphin_client.write_byte(star_alt_paths_unlocked, global_values[2])
+
+            elif self.alt_paths_unlock_type == 4:
+
+                progressive_alt_path_count = self.progressive_alt_paths
+
+                if progressive_alt_path_count >= 1:
+                    self.game_interface.dolphin_client.write_byte(mushroom_alt_paths_unlocked, 1)
+                if progressive_alt_path_count >= 2:
+                    self.game_interface.dolphin_client.write_byte(flower_alt_paths_unlocked, 1)
+                if progressive_alt_path_count >= 3:
+                    self.game_interface.dolphin_client.write_byte(star_alt_paths_unlocked, 1)
+                if progressive_alt_path_count >= 4:
+                    self.game_interface.dolphin_client.write_byte(mushroom_alt_paths_unlocked, 3)
+                if progressive_alt_path_count >= 5:
+                    self.game_interface.dolphin_client.write_byte(flower_alt_paths_unlocked, 3)
+                if progressive_alt_path_count >= 6:
+                    self.game_interface.dolphin_client.write_byte(star_alt_paths_unlocked, 3)
+
+            elif self.alt_paths_unlock_type == 5:
+
+                progressive_alt_path_count = self.progressive_alt_paths
+
+                if progressive_alt_path_count >= 1:
+                    self.game_interface.dolphin_client.write_byte(mushroom_alt_paths_unlocked, 3)
+                if progressive_alt_path_count >= 2:
+                    self.game_interface.dolphin_client.write_byte(flower_alt_paths_unlocked, 3)
+                if progressive_alt_path_count >= 3:
+                    self.game_interface.dolphin_client.write_byte(star_alt_paths_unlocked, 3)
+
+            # Handles those Final Fantasy Characters block paths that I hate
+            if current_cup in ["Mushroom", "Flower"]:
+                self.game_interface.dolphin_client.write_byte(star_alt_paths_unlocked, 3)
+                if current_cup == "Flower":
+                    for sport in sports:
+                        if sport != "Sports Mix":
+                            sport_class = sport_addresses[sport]
+                            addr = getattr(sport_class.Characters, "white_mage")
+                            new_addr = get_address(addr)
+                            self.game_interface.dolphin_client.write_byte(new_addr, 1)
+                            await self.check_write(new_addr, "byte", 1)
+        else:
+            self.game_interface.dolphin_client.write_byte(mushroom_alt_paths_unlocked, 0)
+            self.game_interface.dolphin_client.write_byte(flower_alt_paths_unlocked, 0)
+            self.game_interface.dolphin_client.write_byte(star_alt_paths_unlocked, 0)
+
+        
 
     # === Exhibition Unlocks ===
 
@@ -1665,7 +2028,7 @@ class MSMContext(SuperContext):
         ]
 
         # Count how many total Progressive Stage items the server has sent us
-        progressive_count = len(self.progressive_courts)
+        progressive_count = self.progressive_courts
 
         # Iterate through ordered list up to the number of stages we have unlocked
         for index in range(progressive_count):
@@ -1851,7 +2214,9 @@ class MSMContext(SuperContext):
         
         if filler == "Special Meter Charge":
             if "Special Meter" in self.unlocked_abilities:
-                self.game_interface.dolphin_client.write_float(self.addresslib.p_special_meter_addr, 1.0)
+                self.game_interface.dolphin_client.write_pointer(self.addresslib.p_special_meter_addr,
+                                                                 Pointers.Player.special_meter_offsets,
+                                                                 "float", 1.0)
                 await self.mark_consumable_handled(item_index)
                 return
             else:
@@ -2520,25 +2885,6 @@ class MSMContext(SuperContext):
         self.locations_checked.add(location_id)
         self.debug_log(f"Checked location: name={location_name}, id={location_id}")
 
-    def get_tournament_cup_and_round(self, sport: str, stage_code: str):
-        """Gets the current cup and round (if applicable)"""
-
-        current_cup = self.game_interface.current_tournament
-
-        if current_cup in tournament_round_stages.get(sport, {}) and current_cup is not None:
-            stages = tournament_round_stages[sport][current_cup]
-            if stage_code in stages:
-                return current_cup, stages.index(stage_code) + 1
-
-            self.debug_log(f"Stage {stage_code} was not found in current tournament cup {current_cup}")
-            return None, None
-
-        for cup, stages in tournament_round_stages.get(sport, {}).items():
-            if stage_code in stages:
-                return cup, stages.index(stage_code) + 1
-
-        return None, None
-
     def get_current_cup_location_name(self) -> Optional[str]:
         """Get the correct location name for the sport, cup and round"""
 
@@ -2559,13 +2905,14 @@ class MSMContext(SuperContext):
             self.debug_log(f"Could not build cup location from court={court_name}, sport={sport}")
             return None
 
-        cup, round_number = self.get_tournament_cup_and_round(sport, court_code)
+        cup = self.game_interface.get_tournament_cup()
+        round_number = self.game_interface.get_tournament_round()
 
         if cup is None or round_number is None:
             self.debug_log(f"Could not find tournament cup/round for sport={sport}, court_code={court_code}")
             return None
 
-        difficulty = self.game_interface.get_tournament_difficulty(cup)
+        difficulty = self.game_interface.get_tournament_difficulty()
 
         if difficulty is None and not sports_mix_activated:
             self.debug_log(f"Could not find tournament difficulty for cup={cup}")
@@ -2576,12 +2923,41 @@ class MSMContext(SuperContext):
         else:
             return f"{sport}: Beat {difficulty} {cup} Round {round_number}"
 
+    def get_current_alt_path_location_name(self) -> Optional[str]:
+        """Same as above, but for alt paths"""
+
+        current_node = self.game_interface.get_player_current_node()
+        current_cup = self.game_interface.get_tournament_cup()
+        current_difficulty = self.game_interface.get_tournament_difficulty()
+        current_sport = self.game_interface.get_tournament_sport()
+
+        if self.alt_paths_unlock_type == 0:
+            if current_sport != "Sports Mix":
+                return f"{current_sport} {current_cup} Cup Alt Path {current_difficulty} Node {current_node:X}"
+            else:
+                return f"Sports Mix {current_cup} Cup Alt Path Node {current_node:X}"
+        if self.alt_paths_unlock_type == 1:
+            return f"{current_sport} {current_cup} Cup Alt Path Node {current_node:X}"
+        if self.alt_paths_unlock_type == 2 or self.alt_paths.unlock_type == 4:
+            return f"{current_cup} Alt Path {current_difficulty} Node {current_node:X}"
+        if self.alt_paths_unlock_type == 3 or self.alt_paths.unlock_type == 5:
+            return f"{current_cup} Alt Path Node {current_node:X}"
+
     async def check_pending_tournament_location(self):
         if self.last_tournament_location_name is None:
             return
 
         location_name = self.last_tournament_location_name
         self.last_tournament_location_name = None
+        self.debug_log(f"Sending pending tournament location: {location_name}")
+        await self.check_location(location_name)
+
+    async def check_pending_alt_path_location(self):
+        if self.last_alt_path_location_name is None:
+            return
+
+        location_name = self.last_alt_path_location_name
+        self.last_alt_path_location_name = None
         self.debug_log(f"Sending pending tournament location: {location_name}")
         await self.check_location(location_name)
 
@@ -2633,32 +3009,14 @@ class MSMContext(SuperContext):
 
     async def check_current_cup(self):
         """Checks what cup we are in via the tournament map"""
+        current_cup = self.game_interface.get_tournament_cup()
 
-        current_stage = self.game_interface.dolphin_client.read_string(self.addresslib.current_court_addr)
-        stage_code = current_stage[:3]
-
-        # Check standard bracket maps first
-        cup = tournament_map_cups.get(stage_code)
-        if cup is not None:
-            self.game_interface.current_tournament = cup
+        if current_cup.casefold() != "not in tournament":
             self.in_tournament_match = True
-            self.debug_log(f"Current tournament cup set to {cup} via map screen.")
-            return
+        else:
+            self.in_tournament_match = False
 
-        # Sports Mix Override
-        sports_mix_activated = self.game_interface.is_sports_mix()
-        sport = self.game_interface.get_mode()
 
-        if sports_mix_activated and sport:
-            # If we are actively playing a court that belongs to a tournament path,
-            # lock the script into Tournament Mode so Exhibition logic cannot hijack it.
-            for possible_cup, stages in tournament_round_stages.get(sport, {}).items():
-                if stage_code in stages:
-                    self.game_interface.current_tournament = possible_cup
-                    self.in_tournament_match = True  # <--- FORCED TRUE
-                    self.debug_log(
-                        f"Sports Mix Match Detected! Locking tournament mode. Cup: {possible_cup}, Stage: {stage_code}")
-                    return
 
     async def handle_cup_round_win(self):
         """Handles sending the checks for winning a round of a cup"""
@@ -2667,6 +3025,7 @@ class MSMContext(SuperContext):
             return
 
         location_name = self.get_current_cup_location_name()
+
         if location_name is None:
             return
 
@@ -2679,13 +3038,29 @@ class MSMContext(SuperContext):
         await self.check_location(location_name)
         self.last_tournament_location_name = None
 
+    async def handle_alt_path_win(self):
+
+        match_status = self.game_interface.match_status()
+
+        if not self.in_tournament_match:
+            return
+
+        location_name = self.get_current_alt_path_location_name()
+        self.log_once("alt_path",f"Current Alt Path Location: {location_name}", False)
+        if match_status != 1:
+            return
+
+        self.last_alt_path_location_name = location_name
+        await self.check_location(location_name)
+        self.last_alt_path_location_name = None
+
     async def handle_party_wins(self):
         """Handles sending party mode wins"""
         match_status = self.game_interface.match_status()
         _, court_name = self.game_interface.get_court()
         mode = self.game_interface.get_mode()
         
-        if match_status != 1 or mode is None:
+        if self.in_tournament_match or match_status != 1 or mode is None:
             return
         
         if mode in ["Feed Petey", "Bob-omb Dodge", "Smash Skate"]:
@@ -2842,13 +3217,14 @@ class MSMContext(SuperContext):
             self.debug_log(f"Could not check tournament stage unlock for court_name={court_name}")
             return
 
-        cup, round_number = self.get_tournament_cup_and_round(sport, court_code)
+        cup = self.game_interface.get_tournament_cup() + " Cup"
+        round_number = self.game_interface.get_tournament_round()
 
         if cup is None or round_number is None:
             self.debug_log(f"Could not check locked tournament points for sport={sport}, court_code={court_code}")
             return
 
-        difficulty = self.game_interface.get_tournament_difficulty(cup)
+        difficulty = self.game_interface.get_tournament_difficulty()
         required_court = f"{court_name}"
         if sports_mix_activated:
             required_cup = f"Sports Mix: {cup}"
@@ -3368,6 +3744,220 @@ class MSMContext(SuperContext):
             self.has_sent_death = False
 
 
+    # === Meme Options ===
+
+    async def randomize_music(self):
+
+        shuffle_mode = self.music_shuffle
+        if self.music_randomization_applied:
+            return
+
+        if shuffle_mode == 0:
+            return
+
+        await self.load_custom_data()
+
+        classes = [
+            MusicFiles.MenuSongs,
+            MusicFiles.StageSongs,
+            MusicFiles.PartySongs,
+            MusicFiles.TournamentSongs,
+            MusicFiles.MiscSongs,
+            MusicFiles.HarmonyHustlePreviews,
+        ]
+
+        music_data = self.custom_data.get("music", {})
+        
+        if music_data:
+            for song, new_song in music_data.items():
+                self.game_interface.replace_music_file(song, new_song)
+            self.music_randomization_applied = True
+            return
+
+        if shuffle_mode == 1:
+            for cls in classes:
+                class_songs = self.game_interface.get_songs_from_class(cls)
+                class_pool = list(class_songs)
+                for song in class_songs:
+                    new_song = random.choice(class_pool)
+                    self.custom_data["music"][song] = new_song
+                    self.game_interface.replace_music_file(song, new_song)
+                    # self.log_once("music", f"Replaced {song} with {new_song}", False)
+                    class_pool.remove(new_song)
+
+            await self.save_custom_data()
+            self.music_randomization_applied = True
+
+        elif shuffle_mode == 2:
+
+            songs_to_replace = []
+
+            for cls in classes:
+                for song in self.game_interface.get_songs_from_class(cls):
+                    if song not in songs_to_replace:
+                        songs_to_replace.append(song)
+            
+            song_pool = list(songs_to_replace)
+
+            for song in songs_to_replace:
+                new_song = random.choice(song_pool)
+                self.custom_data["music"][song] = new_song
+                self.game_interface.replace_music_file(song, new_song)
+                # self.log_once("music", f"Replaced {song} with {new_song}", False)
+                song_pool.remove(new_song)
+            await self.save_custom_data()
+            self.music_randomization_applied = True
+
+
+    async def replace_all_opponent_characters(self):
+
+        if self.all_one_opponent != 0:
+            for i in range(7):
+                character_attr = getattr(TournamentAddresses, f"cpu_{i+1}_character")
+                teammate_1_attr = getattr(TournamentAddresses, f"cpu_{i+1}_teammate_1")
+                teammate_2_attr = getattr(TournamentAddresses, f"cpu_{i+1}_teammate_2")
+                
+                cpu_main_char = get_address(character_attr)
+                cpu_teammate_1 = get_address(teammate_1_attr)
+                cpu_teammate_2 = get_address(teammate_2_attr)
+
+                self.game_interface.dolphin_client.write_byte(cpu_main_char, self.all_one_opponent - 1)
+                self.game_interface.dolphin_client.write_byte(cpu_teammate_1, self.all_one_opponent - 1)
+                self.game_interface.dolphin_client.write_byte(cpu_teammate_2, self.all_one_opponent - 1)
+
+            red_team_to_replace = 2
+
+            if self.game_interface.check_team_amount() == 3:
+                red_team_to_replace += 1
+            if self.game_interface.get_mode() in ["Dodgeball", "Hockey"]:
+                red_team_to_replace += 1
+            
+            for i in range(red_team_to_replace):
+                character_attr = getattr(MatchAddresses, f"red_character_{i+1}")
+                character_addr = get_address(character_attr)
+                self.game_interface.dolphin_client.write_byte(character_addr, self.all_one_opponent - 1)
+
+            if self.game_interface.get_mode() in ["Feed Petey", "Harmony Hustle", "Bob-omb Dodge", "Smash Skate"]:
+                self.game_interface.dolphin_client.write_byte(get_address(PlayerAddresses.character_2), self.all_one_opponent - 1)
+
+    async def randomize_tints(self):
+        # self.log_once("tints", f"{self.random_tint}", False)
+        if not self.random_tint:
+            return
+
+        stages = ["s01", "s02", "s03", "s04", "s05", "s06", "s07", "s09", "s10",
+                  "s11", "s12", "s15", "s16", "s17", "s20", "s21", "s31", "s32", 
+                  "s33", "s34", "s39", "s40", "s41", "s42", "s55", "s56", "s57",
+                  "s70", "s71", "s72", "s85", "s86", "s87"
+                  ]
+
+        await self.load_custom_data()
+
+        tint_data = self.custom_data.get("tints", {})
+
+        if not tint_data:
+            for stage in stages:
+                
+                red_value = random.randint(0x40, 0xFF)
+                green_value = random.randint(0x40, 0xFF)
+                blue_value = random.randint(0x40, 0xFF)
+                self.custom_data["tints"][stage] = [red_value, green_value, blue_value]
+            await self.save_custom_data()
+            tint_data = self.custom_data["tints"]
+
+        current_stage = self.game_interface.get_court()[0]
+
+        if current_stage not in stages:
+            return
+
+        stage_tint = tint_data.get(current_stage)
+
+        red_value = int(stage_tint[0])
+        green_value = int(stage_tint[1])
+        blue_value = int(stage_tint[2])
+        rgba_value = red_value * 0x1000000 + green_value * 0x10000 + blue_value * 0x100 + 0xFF
+
+        current_tint = self.game_interface.dolphin_client.read_word(get_address(MatchAddresses.stage_tint))
+        current_tint_r = (current_tint >> 24)
+        current_tint_g = (current_tint >> 16) & 0xFF
+        current_tint_b = (current_tint >> 8) & 0xFF
+
+        if not self.previous_stage:
+            self.previous_stage = current_stage
+
+        if self.previous_stage != current_stage:
+            self.previous_stage = current_stage
+            current_tint = 0xFFFFFFFF
+
+        # Changing this to "Close Enough" to avoid flickering issues in Volleyball
+        if current_tint_r >= 0xE6 and current_tint_g >= 0xE6 and current_tint_b >= 0xE6:
+            self.game_interface.dolphin_client.write_word(get_address(MatchAddresses.stage_tint), rgba_value)
+            self.log_once("tints", f"Tint for stage {current_stage} applied: {hex(rgba_value)}", False)
+
+        
+    # === QOL Stuff ===
+
+    async def restrict_sports_mix (self):
+
+        # Placeholder
+        restrict_sm = True
+
+        if not restrict_sm or not self.enabled_sports or self.enabled_sports == ["Sports Mix"] or "Sports Mix" not in self.enabled_sports:
+            return
+
+        if self.game_interface.get_tournament_sport() != "Sports Mix":
+            return
+
+        available_sports = list(self.enabled_sports)
+        available_sports.remove("Sports Mix")
+
+        current_cup = self.game_interface.get_tournament_cup()
+
+        sports_to_value = {"Basketball": 0, "Volleyball": 1, "Dodgeball": 2, "Hockey": 3}
+
+        # Make sure that the tournament isnt just all one sport if possible
+        banned_sport = None
+        
+        for i in range(3):
+
+            new_sport = random.choice([sport for sport in available_sports if sport != banned_sport])
+
+            for j in range(2**(2-i)):
+
+                round = i + 1
+                match = j + 1
+
+                mode_address = get_address(getattr(TournamentAddresses, f"round_{round}_match_{match}_mode"))
+                stage_address = get_address(getattr(TournamentAddresses, f"round_{round}_match_{match}_stage"))
+                mode = self.game_interface.dolphin_client.read_byte(mode_address)
+
+                # Check the 16th's place to see if already rando'd or not (also do you even call it the 16th's place idk)
+                
+                
+                if not ((mode >> 4) == 1 or (mode >> 4) == 9):
+                    new_stage = int(tournament_round_stages[new_sport][current_cup][round - 1][-2:])
+
+                    self.game_interface.dolphin_client.write_byte(mode_address, sports_to_value[new_sport] + 0x10)
+                    self.game_interface.dolphin_client.write_byte(stage_address, new_stage)
+
+            # Just in case someone enables 1 sport and Sports Mix only for some reason (but why tho)
+            if len(available_sports) > 1:
+                banned_sport = new_sport
+
+        if self.game_interface.get_player_current_node() >= 0x17 and not self.game_interface.get_player_current_node() == 0xFF:
+            if not self.game_interface.is_in_match():
+                new_alt_sport = random.choice(available_sports)
+                self.game_interface.dolphin_client.write_byte(get_address(TournamentAddresses.alt_path_mode), sports_to_value[new_alt_sport] + 0x10)
+
+
+
+
+
+
+
+        
+        
+
     # === Misc stuff idk where to put ===
 
 
@@ -3519,6 +4109,17 @@ class MSMContext(SuperContext):
 
     async def handle_in_match(self):
         """What functions should be handled during a match"""
+        # Music Randomizer
+        await self.randomize_music()
+        await self.randomize_tints()
+        await self.replace_all_opponent_characters()
+
+        # Sports Mix Restriction
+        await self.restrict_sports_mix()
+
+        # Opponents Setter
+        await self.replace_all_opponent_characters()
+
         # Cup Goal
         await self.track_cups_won()
         if self.goal_condition == 3:
@@ -3530,9 +4131,11 @@ class MSMContext(SuperContext):
             await self.has_ex_goaled()
 
 
+        await self.check_current_cup()
         # Custom Tournament Settings
         if self.in_tournament_match:
             await self.handle_custom_tournament_settings()
+            await self.handle_alt_path_unlocks()
 
         # Deathlink
         await self.handle_send_deathlink()
@@ -3545,6 +4148,7 @@ class MSMContext(SuperContext):
         # Locations
         await self.handle_exhibition_win()
         await self.handle_cup_round_win()
+        await self.handle_alt_path_win()
         await self.send_character_sanity_checks()
         await self.send_court_sanity_checks()
         await self.send_special_sanity_checks()
@@ -3567,6 +4171,11 @@ class MSMContext(SuperContext):
 
     async def handle_in_boss(self):
         """What functions should be handled in the boss"""
+        # Music Randomizer
+        await self.randomize_music()
+        await self.randomize_tints()
+        await self.replace_all_opponent_characters()
+        
 
         # Boss stuff
         await self.handle_boss_hp()
@@ -3590,7 +4199,19 @@ class MSMContext(SuperContext):
     async def handle_in_tournament_map(self):
         """What functions should be handled in a tournament map"""
 
+        # Music Randomizer
+        await self.randomize_music()
+        await self.randomize_tints()
+        await self.replace_all_opponent_characters()
+
+        # Sports Mix Restriction
+        await self.restrict_sports_mix()
+
+        # Opponents Setter
+        await self.replace_all_opponent_characters()
+
         await self.check_current_cup()
+        await self.handle_alt_path_unlocks()
         await self.check_pending_tournament_location()
         await self.unlock_behemoth()
 
@@ -3601,6 +4222,15 @@ class MSMContext(SuperContext):
 
 
     async def handle_in_party_modes(self):
+        # Music Randomizer
+        await self.randomize_music()
+        await self.randomize_tints()
+        await self.replace_all_opponent_characters()
+        
+
+        # Opponents Setter
+        await self.replace_all_opponent_characters()
+
         # Party Goal
         if self.goal_condition == 5:
             await self.track_party_won()
@@ -3608,9 +4238,11 @@ class MSMContext(SuperContext):
 
         # Deathlink
         await self.handle_send_deathlink()
+        await self.handle_alt_path_unlocks()
 
         # Locations
         await self.handle_party_wins()
+        await self.handle_alt_path_win()
         await self.send_character_sanity_checks()
         await self.send_court_sanity_checks()
 
@@ -3622,6 +4254,14 @@ class MSMContext(SuperContext):
 
     async def handle_in_main_menu(self):
         """What functions should be handled in the main menu"""
+        # Music Randomizer
+        await self.randomize_music()
+        await self.randomize_tints()
+        await self.replace_all_opponent_characters()
+
+        # Sports Mix Restriction
+        await self.restrict_sports_mix()
+
         # Cup Goal
         await self.track_cups_won()
         if self.goal_condition == 3:
